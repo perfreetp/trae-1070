@@ -164,7 +164,9 @@ export default function Chat() {
   const handleConfirmReceived = (tradeId: string) => {
     const result = confirmReceived(tradeId);
     if (!result.success && result.missingCards) {
-      const missingText = result.missingCards.map(m => `${m.name}：持有 ${m.available} 张，需要 ${m.needed} 张`).join('；');
+      const missingText = result.missingCards.map(m => 
+        `${m.name} (${conditionLabels[m.condition]} ${languageLabels[m.language]})：持有 ${m.available} 张，需要 ${m.needed} 张`
+      ).join('\n');
       alert(`无法确认收货，以下卡牌数量不足：\n${missingText}`);
     }
   };

@@ -62,7 +62,7 @@ interface UserStore {
   
   bulkImportCollection: (items: { cardId: string; quantity: number; condition?: CardCondition; language?: Language }[]) => void;
   
-  processTradeCompletion: (offeredCards: { cardId: string; quantity: number; condition?: CardCondition; language?: Language }[], receivedCards: { cardId: string; quantity: number; condition?: CardCondition; language?: Language }[]) => { success: boolean; missingCards?: { cardId: string; name: string; available: number; needed: number }[] };
+  processTradeCompletion: (offeredCards: { cardId: string; quantity: number; condition?: CardCondition; language?: Language }[], receivedCards: { cardId: string; quantity: number; condition?: CardCondition; language?: Language }[]) => { success: boolean; missingCards?: { cardId: string; name: string; available: number; needed: number; condition: CardCondition; language: Language }[] };
 }
 
 export const useUserStore = create<UserStore>((set, get) => ({
@@ -110,26 +110,30 @@ export const useUserStore = create<UserStore>((set, get) => ({
   updateCollectionItem: (cardId, oldCondition, oldLanguage, data) => set((state) => {
     const newCondition = data.condition || oldCondition;
     const newLanguage = data.language || oldLanguage;
+    const newQuantity = data.quantity;
+    
+    const oldItem = state.collection.find(
+      (item) => item.cardId === cardId && item.condition === oldCondition && item.language === oldLanguage
+    );
+    
+    if (!oldItem) return state;
     
     if (newCondition !== oldCondition || newLanguage !== oldLanguage) {
-      const existingIdx = state.collection.findIndex(
+      const existingTargetItem = state.collection.find(
         (item) => item.cardId === cardId && item.condition === newCondition && item.language === newLanguage
       );
       
-      if (existingIdx >= 0) {
-        const oldItem = state.collection.find(
-          (item) => item.cardId === cardId && item.condition === oldCondition && item.language === oldLanguage
-        );
-        if (oldItem) {
-          const newCollection = state.collection.filter(
-            (item) => !(item.cardId === cardId && item.condition === oldCondition && item.language === oldLanguage)
-          );
-          newCollection[existingIdx] = {
-            ...newCollection[existingIdx],
-            quantity: newCollection[existingIdx].quantity + (data.quantity || oldItem.quantity),
-          };
-          return { collection: newCollection };
-        }
+      if (existingTargetItem) {
+        const mergedQuantity = existingTargetItem.quantity + (newQuantity ?? oldItem.quantity);
+        const newCollection = state.collection.filter(
+          (item) => !(item.cardId === cardId && item.condition === oldCondition && item.language === oldLanguage)
+        ).map((item) => {
+          if (item.cardId === cardId && item.condition === newCondition && item.language === newLanguage) {
+            return { ...item, quantity: mergedQuantity };
+          }
+          return item;
+        });
+        return { collection: newCollection };
       }
     }
     
@@ -293,6 +297,8 @@ export const useUserStore = create<UserStore>((set, get) => ({
             name: card?.name || offered.cardId,
             available,
             needed: offered.quantity,
+            condition,
+            language,
           });
         }
       }
