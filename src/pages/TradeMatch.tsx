@@ -2,10 +2,10 @@ import { useState, useMemo } from 'react';
 import { Layers, Users, Star, ArrowRight, MessageSquare, RefreshCw, Zap, CheckCircle, X, Plus, Minus, Send, Check } from 'lucide-react';
 import { useTradeStore } from '../store/useTradeStore';
 import { useCardStore } from '../store/useCardStore';
-import { useUserStore } from '../store/useUserStore';
+import { useUserStore, getCardVersionPrice } from '../store/useUserStore';
 import { getUserById, USERS } from '../data/users';
 import { Link, useNavigate } from 'react-router-dom';
-import type { Card, TradeCard, CardCondition, Language } from '../types';
+import type { Card, TradeCard, CardCondition, Language, CollectionItem } from '../types';
 
 const conditionLabels: Record<CardCondition, string> = {
   mint: '全新',
@@ -15,10 +15,17 @@ const conditionLabels: Record<CardCondition, string> = {
   played: '使用过',
 };
 
+const languageLabels: Record<Language, string> = {
+  'zh-CN': '简中',
+  'en-US': '英文',
+  'ja-JP': '日文',
+  'ko-KR': '韩文',
+};
+
 export default function TradeMatch() {
   const { matches, calculateMatches, sendTradeRequest, setActiveChatUserId } = useTradeStore();
   const { getCardById, cards } = useCardStore();
-  const { collection, isBlocked } = useUserStore();
+  const { collection, isBlocked, getCollectionVersions } = useUserStore();
   const [selectedMatch, setSelectedMatch] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showTradeModal, setShowTradeModal] = useState(false);
@@ -30,12 +37,14 @@ export default function TradeMatch() {
   const [tradeMessage, setTradeMessage] = useState('');
   const [step, setStep] = useState<'select-offered' | 'select-requested' | 'confirm'>('select-offered');
 
-  const myCollectionCards = useMemo(() => {
-    return collection.map((item) => ({
+  const myCollectionWithCards = useMemo(() => 
+    collection.map((item) => ({
       ...item,
       card: getCardById(item.cardId),
-    })).filter((item) => item.card);
-  }, [collection, getCardById]);
+      versionKey: `${item.cardId}-${item.condition}-${item.language}`,
+    })).filter((item) => item.card),
+    [collection, getCardById]
+  );
 
   const filteredMatches = useMemo(() => {
     return matches.filter((m) => !isBlocked(m.userId));
@@ -58,20 +67,28 @@ export default function TradeMatch() {
     setShowTradeModal(true);
   };
 
-  const handleToggleOfferedCard = (cardId: string, maxQty: number) => {
+  const handleToggleOfferedVersion = (item: CollectionItem & { versionKey: string }) => {
     setOfferedCards((prev) => {
-      const existing = prev.find((c) => c.cardId === cardId);
-      if (existing) {
-        return prev.filter((c) => c.cardId !== cardId);
+      const existingIdx = prev.findIndex(
+        (c) => c.cardId === item.cardId && c.condition === item.condition && c.language === item.language
+      );
+      if (existingIdx >= 0) {
+        return prev.filter((_, i) => i !== existingIdx);
       }
-      return [...prev, { cardId, quantity: 1, condition: 'near-mint', language: 'zh-CN' }];
+      return [...prev, { 
+        cardId: item.cardId, 
+        quantity: 1, 
+        condition: item.condition, 
+        language: item.language 
+      }];
     });
   };
 
-  const handleUpdateOfferedQuantity = (cardId: string, delta: number, maxQty: number) => {
+  const handleUpdateOfferedQuantity = (versionKey: string, delta: number, maxQty: number) => {
     setOfferedCards((prev) =>
       prev.map((c) => {
-        if (c.cardId === cardId) {
+        const key = `${c.cardId}-${c.condition}-${c.language}`;
+        if (key === versionKey) {
           const newQty = Math.max(1, Math.min(maxQty, c.quantity + delta));
           return { ...c, quantity: newQty };
         }
@@ -86,16 +103,15 @@ export default function TradeMatch() {
       if (existing) {
         return prev.filter((c) => c.cardId !== cardId);
       }
-      return [...prev, { cardId, quantity: 1 }];
+      return [...prev, { cardId, quantity: 1, condition: 'near-mint', language: 'zh-CN' }];
     });
   };
 
-  const handleUpdateRequestedQuantity = (cardId: string, delta: number) => {
+  const handleUpdateRequestedCard = (cardId: string, field: 'quantity' | 'condition' | 'language', value: number | CardCondition | Language) => {
     setRequestedCards((prev) =>
       prev.map((c) => {
         if (c.cardId === cardId) {
-          const newQty = Math.max(1, c.quantity + delta);
-          return { ...c, quantity: newQty };
+          return { ...c, [field]: value };
         }
         return c;
       })
@@ -113,6 +129,18 @@ export default function TradeMatch() {
 
   const targetUser = targetUserId ? getUserById(targetUserId) : null;
   const currentMatch = targetUserId ? matches.find((m) => m.userId === targetUserId) : null;
+
+  const isOfferedSelected = (item: { versionKey: string }) => {
+    return offeredCards.some(
+      (c) => `${c.cardId}-${c.condition}-${c.language}` === item.versionKey
+    );
+  };
+
+  const getOfferedSelected = (item: { versionKey: string }) => {
+    return offeredCards.find(
+      (c) => `${c.cardId}-${c.condition}-${c.language}` === item.versionKey
+    );
+  };
 
   return (
     <div className="min-h-screen pt-24 pb-12">
@@ -358,49 +386,65 @@ export default function TradeMatch() {
             <div className="flex-1 overflow-auto">
               {step === 'select-offered' && (
                 <div>
-                  <h4 className="font-bold text-white mb-4">从我的收藏中选择要给出的卡牌</h4>
-                  {myCollectionCards.length > 0 ? (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                      {myCollectionCards.map((item) => {
-                        const isSelected = offeredCards.some((c) => c.cardId === item.cardId);
-                        const selectedItem = offeredCards.find((c) => c.cardId === item.cardId);
+                  <h4 className="font-bold text-white mb-4">从我的收藏中选择要给出的卡牌版本</h4>
+                  {myCollectionWithCards.length > 0 ? (
+                    <div className="space-y-2">
+                      {myCollectionWithCards.map((item) => {
+                        const isSelected = isOfferedSelected(item);
+                        const selectedItem = getOfferedSelected(item);
+                        const price = item.card ? getCardVersionPrice(item.card, item.condition, item.language) : 0;
+                        
                         return (
                           <div
-                            key={item.cardId}
-                            onClick={() => handleToggleOfferedCard(item.cardId, item.quantity)}
+                            key={item.versionKey}
+                            onClick={() => handleToggleOfferedVersion(item)}
                             className={`p-3 rounded-lg cursor-pointer transition-all border-2 ${
                               isSelected
                                 ? 'border-gold-500 bg-gold-500/10'
                                 : 'border-white/10 bg-surface hover:border-gold-500/50'
                             }`}
                           >
-                            <p className="text-sm font-medium text-white truncate">{item.card!.name}</p>
-                            <p className="text-xs text-gray-400">持有: {item.quantity} 张</p>
-                            {isSelected && selectedItem && (
-                              <div className="flex items-center gap-2 mt-2">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleUpdateOfferedQuantity(item.cardId, -1, item.quantity);
-                                  }}
-                                  className="w-6 h-6 rounded bg-surface-light flex items-center justify-center"
-                                >
-                                  <Minus className="w-3 h-3" />
-                                </button>
-                                <span className="text-sm font-bold text-gold-400 w-6 text-center">
-                                  {selectedItem.quantity}
-                                </span>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleUpdateOfferedQuantity(item.cardId, 1, item.quantity);
-                                  }}
-                                  className="w-6 h-6 rounded bg-surface-light flex items-center justify-center"
-                                >
-                                  <Plus className="w-3 h-3" />
-                                </button>
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <p className="text-sm font-medium text-white">{item.card!.name}</p>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <span className="text-xs px-2 py-0.5 bg-blue-500/20 text-blue-300 rounded-full">
+                                    {languageLabels[item.language]}
+                                  </span>
+                                  <span className="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded-full">
+                                    {conditionLabels[item.condition]}
+                                  </span>
+                                  <span className="text-xs text-gray-400">
+                                    持有: {item.quantity} 张 · ¥{price}/张
+                                  </span>
+                                </div>
                               </div>
-                            )}
+                              {isSelected && selectedItem && (
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleUpdateOfferedQuantity(item.versionKey, -1, item.quantity);
+                                    }}
+                                    className="w-7 h-7 rounded bg-surface-light flex items-center justify-center hover:bg-surface"
+                                  >
+                                    <Minus className="w-3.5 h-3.5" />
+                                  </button>
+                                  <span className="text-sm font-bold text-gold-400 w-8 text-center">
+                                    {selectedItem.quantity}
+                                  </span>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleUpdateOfferedQuantity(item.versionKey, 1, item.quantity);
+                                    }}
+                                    className="w-7 h-7 rounded bg-surface-light flex items-center justify-center hover:bg-surface"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         );
                       })}
@@ -414,47 +458,85 @@ export default function TradeMatch() {
               {step === 'select-requested' && currentMatch && (
                 <div>
                   <h4 className="font-bold text-white mb-4">选择您想要的卡牌（对方拥有）</h4>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                  <div className="space-y-2">
                     {currentMatch.cardsTheyHave.map((cardId) => {
                       const card = getCardById(cardId);
                       if (!card) return null;
                       const isSelected = requestedCards.some((c) => c.cardId === cardId);
                       const selectedItem = requestedCards.find((c) => c.cardId === cardId);
+                      
                       return (
                         <div
                           key={cardId}
-                          onClick={() => handleToggleRequestedCard(cardId)}
-                          className={`p-3 rounded-lg cursor-pointer transition-all border-2 ${
+                          className={`p-3 rounded-lg transition-all border-2 ${
                             isSelected
                               ? 'border-green-500 bg-green-500/10'
-                              : 'border-white/10 bg-surface hover:border-green-500/50'
+                              : 'border-white/10 bg-surface'
                           }`}
                         >
-                          <p className="text-sm font-medium text-white truncate">{card.name}</p>
-                          <p className="text-xs text-gray-400">¥{card.estimatedValue}</p>
+                          <div 
+                            onClick={() => handleToggleRequestedCard(cardId)}
+                            className="cursor-pointer"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <p className="text-sm font-medium text-white">{card.name}</p>
+                                <p className="text-xs text-gray-400">
+                                  {card.setName} · 基础参考价 ¥{card.estimatedValue}
+                                </p>
+                              </div>
+                              {!isSelected && (
+                                <span className="text-xs text-gray-400">点击选择</span>
+                              )}
+                            </div>
+                          </div>
+                          
                           {isSelected && selectedItem && (
-                            <div className="flex items-center gap-2 mt-2">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleUpdateRequestedQuantity(cardId, -1);
-                                }}
-                                className="w-6 h-6 rounded bg-surface-light flex items-center justify-center"
-                              >
-                                <Minus className="w-3 h-3" />
-                              </button>
-                              <span className="text-sm font-bold text-green-400 w-6 text-center">
-                                {selectedItem.quantity}
-                              </span>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleUpdateRequestedQuantity(cardId, 1);
-                                }}
-                                className="w-6 h-6 rounded bg-surface-light flex items-center justify-center"
-                              >
-                                <Plus className="w-3 h-3" />
-                              </button>
+                            <div className="mt-3 pt-3 border-t border-white/10 grid grid-cols-3 gap-3">
+                              <div>
+                                <label className="text-xs text-gray-400 block mb-1">数量</label>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    onClick={() => handleUpdateRequestedCard(cardId, 'quantity', Math.max(1, selectedItem.quantity - 1))}
+                                    className="w-7 h-7 rounded bg-surface-light flex items-center justify-center"
+                                  >
+                                    <Minus className="w-3.5 h-3.5" />
+                                  </button>
+                                  <span className="text-sm font-bold text-green-400 w-8 text-center">
+                                    {selectedItem.quantity}
+                                  </span>
+                                  <button
+                                    onClick={() => handleUpdateRequestedCard(cardId, 'quantity', selectedItem.quantity + 1)}
+                                    className="w-7 h-7 rounded bg-surface-light flex items-center justify-center"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                              <div>
+                                <label className="text-xs text-gray-400 block mb-1">品相</label>
+                                <select
+                                  value={selectedItem.condition}
+                                  onChange={(e) => handleUpdateRequestedCard(cardId, 'condition', e.target.value as CardCondition)}
+                                  className="w-full px-2 py-1 text-xs bg-surface-light border border-white/10 rounded text-white"
+                                >
+                                  {Object.entries(conditionLabels).map(([key, label]) => (
+                                    <option key={key} value={key}>{label}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div>
+                                <label className="text-xs text-gray-400 block mb-1">语言</label>
+                                <select
+                                  value={selectedItem.language}
+                                  onChange={(e) => handleUpdateRequestedCard(cardId, 'language', e.target.value as Language)}
+                                  className="w-full px-2 py-1 text-xs bg-surface-light border border-white/10 rounded text-white"
+                                >
+                                  {Object.entries(languageLabels).map(([key, label]) => (
+                                    <option key={key} value={key}>{label}</option>
+                                  ))}
+                                </select>
+                              </div>
                             </div>
                           )}
                         </div>
@@ -470,13 +552,20 @@ export default function TradeMatch() {
                     <div className="glass-card p-4">
                       <h4 className="font-bold text-gold-400 mb-3">我给出的</h4>
                       {offeredCards.length > 0 ? (
-                        <ul className="space-y-2">
-                          {offeredCards.map((c) => {
+                        <ul className="space-y-3">
+                          {offeredCards.map((c, idx) => {
                             const card = getCardById(c.cardId);
                             return card ? (
-                              <li key={c.cardId} className="flex justify-between text-sm">
-                                <span className="text-white">{card.name}</span>
-                                <span className="text-gold-400">×{c.quantity}</span>
+                              <li key={idx} className="pb-2 border-b border-white/5 last:border-0">
+                                <div className="flex justify-between items-start">
+                                  <div>
+                                    <p className="text-white font-medium">{card.name}</p>
+                                    <p className="text-xs text-gray-400 mt-1">
+                                      {c.language && languageLabels[c.language]} · {c.condition && conditionLabels[c.condition]}
+                                    </p>
+                                  </div>
+                                  <span className="text-gold-400 font-bold">×{c.quantity}</span>
+                                </div>
                               </li>
                             ) : null;
                           })}
@@ -488,13 +577,20 @@ export default function TradeMatch() {
                     <div className="glass-card p-4">
                       <h4 className="font-bold text-green-400 mb-3">我想要的</h4>
                       {requestedCards.length > 0 ? (
-                        <ul className="space-y-2">
-                          {requestedCards.map((c) => {
+                        <ul className="space-y-3">
+                          {requestedCards.map((c, idx) => {
                             const card = getCardById(c.cardId);
                             return card ? (
-                              <li key={c.cardId} className="flex justify-between text-sm">
-                                <span className="text-white">{card.name}</span>
-                                <span className="text-green-400">×{c.quantity}</span>
+                              <li key={idx} className="pb-2 border-b border-white/5 last:border-0">
+                                <div className="flex justify-between items-start">
+                                  <div>
+                                    <p className="text-white font-medium">{card.name}</p>
+                                    <p className="text-xs text-gray-400 mt-1">
+                                      {c.language && languageLabels[c.language]} · {c.condition && conditionLabels[c.condition]}
+                                    </p>
+                                  </div>
+                                  <span className="text-green-400 font-bold">×{c.quantity}</span>
+                                </div>
                               </li>
                             ) : null;
                           })}

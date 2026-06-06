@@ -1,9 +1,24 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { Send, Check, CheckCheck, Package, User, Search, MoreVertical, X, Edit3, Plus, Minus, Save } from 'lucide-react';
+import { Send, Check, CheckCheck, Package, User, Search, MoreVertical, X, Edit3, Plus, Minus, Save, AlertCircle } from 'lucide-react';
 import { useTradeStore } from '../store/useTradeStore';
 import { getUserById } from '../data/users';
 import { useCardStore } from '../store/useCardStore';
-import type { TradeCard, TradeRequest } from '../types';
+import type { TradeCard, TradeRequest, CardCondition, Language } from '../types';
+
+const conditionLabels: Record<CardCondition, string> = {
+  mint: '全新',
+  'near-mint': '近新',
+  excellent: '优秀',
+  good: '良好',
+  played: '使用过',
+};
+
+const languageLabels: Record<Language, string> = {
+  'zh-CN': '简中',
+  'en-US': '英文',
+  'ja-JP': '日文',
+  'ko-KR': '韩文',
+};
 
 export default function Chat() {
   const { 
@@ -30,6 +45,7 @@ export default function Chat() {
   const [negotiateOffered, setNegotiateOffered] = useState<TradeCard[]>([]);
   const [negotiateRequested, setNegotiateRequested] = useState<TradeCard[]>([]);
   const [negotiateMessage, setNegotiateMessage] = useState('');
+  const [originalTrade, setOriginalTrade] = useState<TradeRequest | null>(null);
 
   const conversations = useMemo(() => getConversationsList(), [getConversationsList, messages]);
   const activeConversation = useMemo(() => 
@@ -53,17 +69,18 @@ export default function Chat() {
 
   const handleStartNegotiate = (trade: TradeRequest) => {
     setNegotiatingTrade(trade.id);
-    setNegotiateOffered([...trade.offeredCards]);
-    setNegotiateRequested([...trade.requestedCards]);
+    setOriginalTrade(trade);
+    setNegotiateOffered(trade.offeredCards.map(c => ({ ...c })));
+    setNegotiateRequested(trade.requestedCards.map(c => ({ ...c })));
     setNegotiateMessage('');
   };
 
-  const handleNegotiateUpdate = (type: 'offered' | 'requested', cardId: string, delta: number) => {
+  const handleNegotiateUpdate = (type: 'offered' | 'requested', idx: number, field: 'quantity' | 'condition' | 'language', value: number | CardCondition | Language) => {
     const setter = type === 'offered' ? setNegotiateOffered : setNegotiateRequested;
     setter((prev) =>
-      prev.map((c) => {
-        if (c.cardId === cardId) {
-          return { ...c, quantity: Math.max(1, c.quantity + delta) };
+      prev.map((c, i) => {
+        if (i === idx) {
+          return { ...c, [field]: value };
         }
         return c;
       })
@@ -72,18 +89,57 @@ export default function Chat() {
 
   const handleNegotiateAddCard = (type: 'offered' | 'requested') => {
     const setter = type === 'offered' ? setNegotiateOffered : setNegotiateRequested;
+    const current = type === 'offered' ? negotiateOffered : negotiateRequested;
     const availableCard = cards.find((c) => 
-      !negotiateOffered.some((o) => o.cardId === c.id) && 
-      !negotiateRequested.some((r) => r.cardId === c.id)
+      !current.some((o) => o.cardId === c.id)
     );
     if (availableCard) {
-      setter((prev) => [...prev, { cardId: availableCard.id, quantity: 1 }]);
+      setter((prev) => [...prev, { cardId: availableCard.id, quantity: 1, condition: 'near-mint', language: 'zh-CN' }]);
     }
   };
 
-  const handleNegotiateRemoveCard = (type: 'offered' | 'requested', cardId: string) => {
+  const handleNegotiateRemoveCard = (type: 'offered' | 'requested', idx: number) => {
     const setter = type === 'offered' ? setNegotiateOffered : setNegotiateRequested;
-    setter((prev) => prev.filter((c) => c.cardId !== cardId));
+    setter((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const formatChangeComparison = (oldCards: TradeCard[], newCards: TradeCard[], isOffered: boolean) => {
+    const changes: string[] = [];
+    const oldMap = new Map(oldCards.map(c => [`${c.cardId}-${c.condition}-${c.language}`, c]));
+    const newMap = new Map(newCards.map(c => [`${c.cardId}-${c.condition}-${c.language}`, c]));
+    
+    newCards.forEach((c, idx) => {
+      const key = `${c.cardId}-${c.condition}-${c.language}`;
+      const oldCard = oldCards.find((oc, oi) => {
+        const oldKey = `${oc.cardId}-${oc.condition}-${oc.language}`;
+        return oc.cardId === c.cardId && !newCards.some((nc, ni) => ni !== idx && `${nc.cardId}-${nc.condition}-${nc.language}` === oldKey);
+      });
+      
+      const card = getCardById(c.cardId);
+      if (!card) return;
+      
+      if (!oldCard) {
+        changes.push(`+${c.quantity}x ${card.name} (${conditionLabels[c.condition || 'near-mint']} ${languageLabels[c.language || 'zh-CN']})【新增】`);
+      } else if (oldCard.quantity !== c.quantity || oldCard.condition !== c.condition || oldCard.language !== c.language) {
+        const qtyChange = oldCard.quantity !== c.quantity ? `数量: ${oldCard.quantity}→${c.quantity}` : '';
+        const condChange = oldCard.condition !== c.condition ? `品相: ${conditionLabels[oldCard.condition || 'near-mint']}→${conditionLabels[c.condition || 'near-mint']}` : '';
+        const langChange = oldCard.language !== c.language ? `语言: ${languageLabels[oldCard.language || 'zh-CN']}→${languageLabels[c.language || 'zh-CN']}` : '';
+        const changesArr = [qtyChange, condChange, langChange].filter(Boolean);
+        changes.push(`${card.name}: ${changesArr.join(', ')}`);
+      }
+    });
+    
+    oldCards.forEach((oc) => {
+      const stillExists = newCards.some(nc => nc.cardId === oc.cardId);
+      if (!stillExists) {
+        const card = getCardById(oc.cardId);
+        if (card) {
+          changes.push(`-${oc.quantity}x ${card.name} (${conditionLabels[oc.condition || 'near-mint']} ${languageLabels[oc.language || 'zh-CN']})【移除】`);
+        }
+      }
+    });
+    
+    return changes;
   };
 
   const handleSubmitNegotiation = (trade: TradeRequest) => {
@@ -91,18 +147,26 @@ export default function Chat() {
     
     const otherUserId = trade.fromUserId === 'current-user' ? trade.toUserId : trade.fromUserId;
     const messageText = negotiateMessage || '修改了交易提议';
-    const systemMessage = `【交易修改】提议变更：给出 ${negotiateOffered.map((c) => {
-      const card = getCardById(c.cardId);
-      return card ? `${card.name}×${c.quantity}` : '';
-    }).filter(Boolean).join('、')}；想要 ${negotiateRequested.map((c) => {
-      const card = getCardById(c.cardId);
-      return card ? `${card.name}×${c.quantity}` : '';
-    }).filter(Boolean).join('、')}。${messageText}`;
+    
+    const offeredChanges = originalTrade ? formatChangeComparison(originalTrade.offeredCards, negotiateOffered, true) : [];
+    const requestedChanges = originalTrade ? formatChangeComparison(originalTrade.requestedCards, negotiateRequested, false) : [];
+    
+    const allChanges = [...offeredChanges.map(c => `给出: ${c}`), ...requestedChanges.map(c => `想要: ${c}`)];
+    const systemMessage = `【交易修改】${allChanges.join('；')}。${messageText}`;
     
     updateTradeProposal(trade.id, negotiateOffered, negotiateRequested, messageText);
     sendMessage(otherUserId, systemMessage, trade.id);
     
     setNegotiatingTrade(null);
+    setOriginalTrade(null);
+  };
+
+  const handleConfirmReceived = (tradeId: string) => {
+    const result = confirmReceived(tradeId);
+    if (!result.success && result.missingCards) {
+      const missingText = result.missingCards.map(m => `${m.name}：持有 ${m.available} 张，需要 ${m.needed} 张`).join('；');
+      alert(`无法确认收货，以下卡牌数量不足：\n${missingText}`);
+    }
   };
 
   const formatTime = (timestamp: string) => {
@@ -242,7 +306,7 @@ export default function Chat() {
                           <div
                             className={`px-4 py-2.5 rounded-2xl ${
                               msg.content.startsWith('【交易修改】')
-                                ? 'bg-gold-500/20 text-gold-200 border border-gold-500/30 italic'
+                                ? 'bg-gold-500/20 text-gold-200 border border-gold-500/30'
                                 : msg.senderId === 'current-user'
                                 ? 'bg-primary-600 text-white rounded-br-md'
                                 : 'bg-surface-light text-gray-200 rounded-bl-md'
@@ -333,34 +397,67 @@ export default function Chat() {
                     <div className="flex-1">
                       {isNegotiating ? (
                         <div className="space-y-4">
-                          <div className="grid grid-cols-2 gap-4">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
                               <p className="text-xs text-gray-500 mb-2">给出（修改后）</p>
                               <div className="space-y-2">
-                                {negotiateOffered.map((card) => {
+                                {negotiateOffered.map((card, idx) => {
                                   const cardData = getCardById(card.cardId);
                                   return cardData ? (
-                                    <div key={card.cardId} className="flex items-center gap-2 text-sm">
-                                      <span className="text-gold-400 flex-1 truncate">{cardData.name}</span>
-                                      <button
-                                        onClick={() => handleNegotiateUpdate('offered', card.cardId, -1)}
-                                        className="w-6 h-6 rounded bg-surface flex items-center justify-center"
-                                      >
-                                        <Minus className="w-3 h-3" />
-                                      </button>
-                                      <span className="w-6 text-center text-gold-400 font-bold">{card.quantity}</span>
-                                      <button
-                                        onClick={() => handleNegotiateUpdate('offered', card.cardId, 1)}
-                                        className="w-6 h-6 rounded bg-surface flex items-center justify-center"
-                                      >
-                                        <Plus className="w-3 h-3" />
-                                      </button>
-                                      <button
-                                        onClick={() => handleNegotiateRemoveCard('offered', card.cardId)}
-                                        className="w-6 h-6 rounded bg-surface flex items-center justify-center text-red-400"
-                                      >
-                                        <X className="w-3 h-3" />
-                                      </button>
+                                    <div key={idx} className="bg-surface p-2 rounded-lg space-y-2">
+                                      <p className="text-sm text-gold-400 font-medium">{cardData.name}</p>
+                                      <div className="grid grid-cols-3 gap-2">
+                                        <div>
+                                          <label className="text-xs text-gray-500 block mb-1">数量</label>
+                                          <div className="flex items-center gap-1">
+                                            <button
+                                              onClick={() => handleNegotiateUpdate('offered', idx, 'quantity', Math.max(1, card.quantity - 1))}
+                                              className="w-5 h-5 rounded bg-surface-light flex items-center justify-center"
+                                            >
+                                              <Minus className="w-3 h-3" />
+                                            </button>
+                                            <span className="text-sm text-gold-400 font-bold w-5 text-center">{card.quantity}</span>
+                                            <button
+                                              onClick={() => handleNegotiateUpdate('offered', idx, 'quantity', card.quantity + 1)}
+                                              className="w-5 h-5 rounded bg-surface-light flex items-center justify-center"
+                                            >
+                                              <Plus className="w-3 h-3" />
+                                            </button>
+                                          </div>
+                                        </div>
+                                        <div>
+                                          <label className="text-xs text-gray-500 block mb-1">品相</label>
+                                          <select
+                                            value={card.condition}
+                                            onChange={(e) => handleNegotiateUpdate('offered', idx, 'condition', e.target.value as CardCondition)}
+                                            className="w-full px-1 py-1 text-xs bg-surface-light border border-white/10 rounded text-white"
+                                          >
+                                            {Object.entries(conditionLabels).map(([key, label]) => (
+                                              <option key={key} value={key}>{label}</option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                        <div className="flex items-end gap-1">
+                                          <div className="flex-1">
+                                            <label className="text-xs text-gray-500 block mb-1">语言</label>
+                                            <select
+                                              value={card.language}
+                                              onChange={(e) => handleNegotiateUpdate('offered', idx, 'language', e.target.value as Language)}
+                                              className="w-full px-1 py-1 text-xs bg-surface-light border border-white/10 rounded text-white"
+                                            >
+                                              {Object.entries(languageLabels).map(([key, label]) => (
+                                                <option key={key} value={key}>{label}</option>
+                                              ))}
+                                            </select>
+                                          </div>
+                                          <button
+                                            onClick={() => handleNegotiateRemoveCard('offered', idx)}
+                                            className="w-6 h-6 rounded bg-surface-light flex items-center justify-center text-red-400 mb-0.5"
+                                          >
+                                            <X className="w-3 h-3" />
+                                          </button>
+                                        </div>
+                                      </div>
                                     </div>
                                   ) : null;
                                 })}
@@ -375,30 +472,63 @@ export default function Chat() {
                             <div>
                               <p className="text-xs text-gray-500 mb-2">想要（修改后）</p>
                               <div className="space-y-2">
-                                {negotiateRequested.map((card) => {
+                                {negotiateRequested.map((card, idx) => {
                                   const cardData = getCardById(card.cardId);
                                   return cardData ? (
-                                    <div key={card.cardId} className="flex items-center gap-2 text-sm">
-                                      <span className="text-green-400 flex-1 truncate">{cardData.name}</span>
-                                      <button
-                                        onClick={() => handleNegotiateUpdate('requested', card.cardId, -1)}
-                                        className="w-6 h-6 rounded bg-surface flex items-center justify-center"
-                                      >
-                                        <Minus className="w-3 h-3" />
-                                      </button>
-                                      <span className="w-6 text-center text-green-400 font-bold">{card.quantity}</span>
-                                      <button
-                                        onClick={() => handleNegotiateUpdate('requested', card.cardId, 1)}
-                                        className="w-6 h-6 rounded bg-surface flex items-center justify-center"
-                                      >
-                                        <Plus className="w-3 h-3" />
-                                      </button>
-                                      <button
-                                        onClick={() => handleNegotiateRemoveCard('requested', card.cardId)}
-                                        className="w-6 h-6 rounded bg-surface flex items-center justify-center text-red-400"
-                                      >
-                                        <X className="w-3 h-3" />
-                                      </button>
+                                    <div key={idx} className="bg-surface p-2 rounded-lg space-y-2">
+                                      <p className="text-sm text-green-400 font-medium">{cardData.name}</p>
+                                      <div className="grid grid-cols-3 gap-2">
+                                        <div>
+                                          <label className="text-xs text-gray-500 block mb-1">数量</label>
+                                          <div className="flex items-center gap-1">
+                                            <button
+                                              onClick={() => handleNegotiateUpdate('requested', idx, 'quantity', Math.max(1, card.quantity - 1))}
+                                              className="w-5 h-5 rounded bg-surface-light flex items-center justify-center"
+                                            >
+                                              <Minus className="w-3 h-3" />
+                                            </button>
+                                            <span className="text-sm text-green-400 font-bold w-5 text-center">{card.quantity}</span>
+                                            <button
+                                              onClick={() => handleNegotiateUpdate('requested', idx, 'quantity', card.quantity + 1)}
+                                              className="w-5 h-5 rounded bg-surface-light flex items-center justify-center"
+                                            >
+                                              <Plus className="w-3 h-3" />
+                                            </button>
+                                          </div>
+                                        </div>
+                                        <div>
+                                          <label className="text-xs text-gray-500 block mb-1">品相</label>
+                                          <select
+                                            value={card.condition}
+                                            onChange={(e) => handleNegotiateUpdate('requested', idx, 'condition', e.target.value as CardCondition)}
+                                            className="w-full px-1 py-1 text-xs bg-surface-light border border-white/10 rounded text-white"
+                                          >
+                                            {Object.entries(conditionLabels).map(([key, label]) => (
+                                              <option key={key} value={key}>{label}</option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                        <div className="flex items-end gap-1">
+                                          <div className="flex-1">
+                                            <label className="text-xs text-gray-500 block mb-1">语言</label>
+                                            <select
+                                              value={card.language}
+                                              onChange={(e) => handleNegotiateUpdate('requested', idx, 'language', e.target.value as Language)}
+                                              className="w-full px-1 py-1 text-xs bg-surface-light border border-white/10 rounded text-white"
+                                            >
+                                              {Object.entries(languageLabels).map(([key, label]) => (
+                                                <option key={key} value={key}>{label}</option>
+                                              ))}
+                                            </select>
+                                          </div>
+                                          <button
+                                            onClick={() => handleNegotiateRemoveCard('requested', idx)}
+                                            className="w-6 h-6 rounded bg-surface-light flex items-center justify-center text-red-400 mb-0.5"
+                                          >
+                                            <X className="w-3 h-3" />
+                                          </button>
+                                        </div>
+                                      </div>
                                     </div>
                                   ) : null;
                                 })}
@@ -431,7 +561,10 @@ export default function Chat() {
                               发送新提议
                             </button>
                             <button
-                              onClick={() => setNegotiatingTrade(null)}
+                              onClick={() => {
+                                setNegotiatingTrade(null);
+                                setOriginalTrade(null);
+                              }}
                               className="btn-outline text-sm"
                             >
                               取消
@@ -448,9 +581,16 @@ export default function Chat() {
                               {trade.offeredCards.map((card, idx) => {
                                 const cardData = getCardById(card.cardId);
                                 return cardData ? (
-                                  <div key={idx} className="text-sm text-green-400 flex items-center gap-2">
-                                    <span className="w-6 h-6 rounded bg-green-500/20 flex items-center justify-center text-xs">+{card.quantity}</span>
-                                    {cardData.name}
+                                  <div key={idx} className="text-sm text-green-400">
+                                    <span className="flex items-center gap-1">
+                                      <span className="w-6 h-6 rounded bg-green-500/20 flex items-center justify-center text-xs">+{card.quantity}</span>
+                                      {cardData.name}
+                                      {(card.condition || card.language) && (
+                                        <span className="text-gray-500 text-xs ml-1">
+                                          ({card.condition && conditionLabels[card.condition]}{card.language ? ` ${languageLabels[card.language]}` : ''})
+                                        </span>
+                                      )}
+                                    </span>
                                   </div>
                                 ) : null;
                               })}
@@ -464,9 +604,16 @@ export default function Chat() {
                               {trade.requestedCards.map((card, idx) => {
                                 const cardData = getCardById(card.cardId);
                                 return cardData ? (
-                                  <div key={idx} className="text-sm text-red-400 flex items-center gap-2">
-                                    <span className="w-6 h-6 rounded bg-red-500/20 flex items-center justify-center text-xs">-{card.quantity}</span>
-                                    {cardData.name}
+                                  <div key={idx} className="text-sm text-red-400">
+                                    <span className="flex items-center gap-1">
+                                      <span className="w-6 h-6 rounded bg-red-500/20 flex items-center justify-center text-xs">-{card.quantity}</span>
+                                      {cardData.name}
+                                      {(card.condition || card.language) && (
+                                        <span className="text-gray-500 text-xs ml-1">
+                                          ({card.condition && conditionLabels[card.condition]}{card.language ? ` ${languageLabels[card.language]}` : ''})
+                                        </span>
+                                      )}
+                                    </span>
                                   </div>
                                 ) : null;
                               })}
@@ -535,7 +682,7 @@ export default function Chat() {
                     {trade.status === 'shipped' && (
                       <>
                         <button
-                          onClick={() => confirmReceived(trade.id)}
+                          onClick={() => handleConfirmReceived(trade.id)}
                           className="btn-gold flex items-center gap-2"
                         >
                           <Check className="w-4 h-4" />

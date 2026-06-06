@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
-import { Plus, Upload, Download, Trash2, Edit3, BarChart3, PieChart, TrendingUp, X, Check, Copy, Save } from 'lucide-react';
-import { useUserStore } from '../store/useUserStore';
+import { Plus, Upload, Download, Trash2, Edit3, BarChart3, PieChart, TrendingUp, X, Check, Copy, Save, Layers } from 'lucide-react';
+import { useUserStore, getCardVersionPrice } from '../store/useUserStore';
 import { useCardStore } from '../store/useCardStore';
 import { CardDisplay, CardDetailModal } from '../components/Card/CardDisplay';
 import type { Card, CardCondition, Language, CollectionItem } from '../types';
@@ -20,15 +20,21 @@ const languageLabels: Record<Language, string> = {
   'ko-KR': '韩文',
 };
 
+interface EditFormState {
+  quantity: number;
+  condition: CardCondition;
+  language: Language;
+}
+
 export default function MyCollection() {
   const { collection, getCollectionStats, removeFromCollection, updateCollectionItem, bulkImportCollection, addToCollection } = useUserStore();
   const { getCardById, cards } = useCardStore();
   const [selectedCard, setSelectedCard] = useState<Card | null>(null);
-  const [editingItem, setEditingItem] = useState<string | null>(null);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [importText, setImportText] = useState('');
-  const [editForm, setEditForm] = useState<{ quantity: number; condition: CardCondition; language: Language }>({
+  const [editForm, setEditForm] = useState<EditFormState>({
     quantity: 1,
     condition: 'near-mint',
     language: 'zh-CN',
@@ -37,12 +43,29 @@ export default function MyCollection() {
   const stats = useMemo(() => getCollectionStats(), [getCollectionStats, collection, cards]);
 
   const collectionWithCards = useMemo(() => 
-    collection.map((item) => ({
-      ...item,
-      card: getCardById(item.cardId),
-    })).filter((item) => item.card),
+    collection.map((item) => {
+      const card = getCardById(item.cardId);
+      const price = card ? getCardVersionPrice(card, item.condition, item.language) : 0;
+      return {
+        ...item,
+        card,
+        unitPrice: price,
+        subTotal: price * item.quantity,
+        versionKey: `${item.cardId}-${item.condition}-${item.language}`,
+      };
+    }).filter((item) => item.card),
     [collection, getCardById, cards]
   );
+
+  const groupedByCard = useMemo(() => {
+    const groups = new Map<string, typeof collectionWithCards>();
+    collectionWithCards.forEach((item) => {
+      const existing = groups.get(item.cardId) || [];
+      existing.push(item);
+      groups.set(item.cardId, existing);
+    });
+    return groups;
+  }, [collectionWithCards]);
 
   const exportText = useMemo(() => {
     return collectionWithCards.map((item) => {
@@ -51,7 +74,7 @@ export default function MyCollection() {
   }, [collectionWithCards]);
 
   const handleStartEdit = (item: CollectionItem) => {
-    setEditingItem(item.cardId);
+    setEditingKey(`${item.cardId}-${item.condition}-${item.language}`);
     setEditForm({
       quantity: item.quantity,
       condition: item.condition,
@@ -59,13 +82,13 @@ export default function MyCollection() {
     });
   };
 
-  const handleSaveEdit = (cardId: string) => {
+  const handleSaveEdit = (item: CollectionItem) => {
     if (editForm.quantity <= 0) {
-      removeFromCollection(cardId);
+      removeFromCollection(item.cardId, item.condition, item.language);
     } else {
-      updateCollectionItem(cardId, editForm);
+      updateCollectionItem(item.cardId, item.condition, item.language, editForm);
     }
-    setEditingItem(null);
+    setEditingKey(null);
   };
 
   const handleImport = () => {
@@ -124,7 +147,7 @@ export default function MyCollection() {
       bulkImportCollection(items);
       setImportText('');
       setShowImportModal(false);
-      alert(`成功导入 ${items.length} 张卡牌${failed > 0 ? `，${failed} 张未识别` : ''}`);
+      alert(`成功导入 ${items.length} 条记录${failed > 0 ? `，${failed} 条未识别` : ''}`);
     } else {
       alert('未能识别任何卡牌，请检查格式');
     }
@@ -143,6 +166,10 @@ export default function MyCollection() {
     a.download = `my-collection-${new Date().toISOString().split('T')[0]}.txt`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const isEditing = (item: CollectionItem) => {
+    return editingKey === `${item.cardId}-${item.condition}-${item.language}`;
   };
 
   return (
@@ -197,11 +224,11 @@ export default function MyCollection() {
           <div className="glass-card p-6">
             <div className="flex items-center gap-3 mb-2">
               <div className="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center">
-                <PieChart className="w-5 h-5 text-purple-400" />
+                <Layers className="w-5 h-5 text-purple-400" />
               </div>
             </div>
             <p className="font-display text-3xl font-bold text-white">{collection.length}</p>
-            <p className="text-sm text-gray-400">不同卡牌</p>
+            <p className="text-sm text-gray-400">不同版本</p>
           </div>
           <div className="glass-card p-6">
             <div className="flex items-center gap-3 mb-2">
@@ -255,97 +282,155 @@ export default function MyCollection() {
           </div>
         </div>
 
-        {/* Collection Grid */}
+        {/* Collection List */}
         <div className="flex items-center justify-between mb-6">
           <h2 className="font-display text-2xl font-bold text-white">
-            收藏列表 <span className="text-gold-400">({collection.length})</span>
+            收藏列表 <span className="text-gold-400">({groupedByCard.size} 种卡牌，共 {collection.length} 个版本)</span>
           </h2>
         </div>
 
         {collectionWithCards.length > 0 ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-            {collectionWithCards.map((item, idx) => (
-              <div key={item.cardId} className="relative animate-fade-in-up" style={{ animationDelay: `${idx * 0.05}s` }}>
-                <CardDisplay
-                  card={item.card!}
-                  quantity={item.quantity}
-                  onView={() => setSelectedCard(item.card!)}
-                />
-                
-                {editingItem === item.cardId ? (
-                  <div className="mt-2 glass-card p-3 space-y-2">
-                    <div>
-                      <label className="text-xs text-gray-400 block mb-1">数量</label>
-                      <input
-                        type="number"
-                        min="0"
-                        value={editForm.quantity}
-                        onChange={(e) => setEditForm({ ...editForm, quantity: parseInt(e.target.value) || 0 })}
-                        className="w-full px-2 py-1 text-sm bg-surface border border-white/10 rounded text-white"
+          <div className="space-y-6">
+            {Array.from(groupedByCard.entries()).map(([cardId, versions], groupIdx) => {
+              const firstVersion = versions[0];
+              const card = firstVersion.card!;
+              const totalQty = versions.reduce((sum, v) => sum + v.quantity, 0);
+              const totalValue = versions.reduce((sum, v) => sum + v.subTotal, 0);
+              
+              return (
+                <div key={cardId} className="glass-card p-4 animate-fade-in-up" style={{ animationDelay: `${groupIdx * 0.05}s` }}>
+                  <div className="flex flex-col md:flex-row gap-4">
+                    {/* Card Image */}
+                    <div className="w-32 flex-shrink-0">
+                      <CardDisplay
+                        card={card}
+                        onView={() => setSelectedCard(card)}
                       />
                     </div>
-                    <div>
-                      <label className="text-xs text-gray-400 block mb-1">品相</label>
-                      <select
-                        value={editForm.condition}
-                        onChange={(e) => setEditForm({ ...editForm, condition: e.target.value as CardCondition })}
-                        className="w-full px-2 py-1 text-sm bg-surface border border-white/10 rounded text-white"
-                      >
-                        {Object.entries(conditionLabels).map(([key, label]) => (
-                          <option key={key} value={key}>{label}</option>
+                    
+                    {/* Card Info & Versions */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between mb-3">
+                        <div>
+                          <h3 className="font-display font-bold text-lg text-white flex items-center gap-2">
+                            {card.name}
+                            <span className={`text-xs px-2 py-0.5 rounded-full rarity-${card.rarity}`}>
+                              {card.rarity === 'common' && '普通'}
+                              {card.rarity === 'uncommon' && '非普通'}
+                              {card.rarity === 'rare' && '稀有'}
+                              {card.rarity === 'mythic' && '秘稀'}
+                              {card.rarity === 'legendary' && '传说'}
+                            </span>
+                          </h3>
+                          <p className="text-sm text-gray-400">{card.setName} · {card.type}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm text-gray-400">合计 {totalQty} 张</p>
+                          <p className="font-bold text-gold-400">¥{totalValue.toLocaleString()}</p>
+                        </div>
+                      </div>
+                      
+                      {/* Version List */}
+                      <div className="space-y-2">
+                        {versions.map((item) => (
+                          <div key={item.versionKey} className="bg-surface rounded-lg p-3">
+                            {isEditing(item) ? (
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                <div>
+                                  <label className="text-xs text-gray-400 block mb-1">数量</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    value={editForm.quantity}
+                                    onChange={(e) => setEditForm({ ...editForm, quantity: parseInt(e.target.value) || 0 })}
+                                    className="w-full px-2 py-1.5 text-sm bg-surface-light border border-white/10 rounded text-white"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-xs text-gray-400 block mb-1">品相</label>
+                                  <select
+                                    value={editForm.condition}
+                                    onChange={(e) => setEditForm({ ...editForm, condition: e.target.value as CardCondition })}
+                                    className="w-full px-2 py-1.5 text-sm bg-surface-light border border-white/10 rounded text-white"
+                                  >
+                                    {Object.entries(conditionLabels).map(([key, label]) => (
+                                      <option key={key} value={key}>{label}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="text-xs text-gray-400 block mb-1">语言</label>
+                                  <select
+                                    value={editForm.language}
+                                    onChange={(e) => setEditForm({ ...editForm, language: e.target.value as Language })}
+                                    className="w-full px-2 py-1.5 text-sm bg-surface-light border border-white/10 rounded text-white"
+                                  >
+                                    {Object.entries(languageLabels).map(([key, label]) => (
+                                      <option key={key} value={key}>{label}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div className="flex items-end gap-2">
+                                  <button
+                                    onClick={() => handleSaveEdit(item)}
+                                    className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm bg-gold-500 text-surface-dark rounded-lg font-medium hover:bg-gold-400 transition-colors"
+                                  >
+                                    <Save className="w-3.5 h-3.5" />
+                                    保存
+                                  </button>
+                                  <button
+                                    onClick={() => setEditingKey(null)}
+                                    className="px-3 py-1.5 text-sm bg-white/10 text-gray-300 rounded-lg hover:bg-white/20 transition-colors"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+                                <div className="flex flex-wrap items-center gap-3 text-sm">
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-500/20 text-blue-300 rounded-full">
+                                    {languageLabels[item.language]}
+                                  </span>
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-purple-500/20 text-purple-300 rounded-full">
+                                    {conditionLabels[item.condition]}
+                                  </span>
+                                  <span className="text-gray-400">
+                                    单价: <span className="text-white">¥{item.unitPrice}</span>
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-4">
+                                  <div className="text-right">
+                                    <span className="text-lg font-bold text-white">×{item.quantity}</span>
+                                    <span className="text-gold-400 font-bold ml-3">¥{item.subTotal.toLocaleString()}</span>
+                                  </div>
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={() => handleStartEdit(item)}
+                                      className="p-2 text-gold-400 hover:text-gold-300 hover:bg-gold-500/10 rounded-lg transition-colors"
+                                      title="编辑"
+                                    >
+                                      <Edit3 className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => removeFromCollection(item.cardId, item.condition, item.language)}
+                                      className="p-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors"
+                                      title="删除"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-xs text-gray-400 block mb-1">语言</label>
-                      <select
-                        value={editForm.language}
-                        onChange={(e) => setEditForm({ ...editForm, language: e.target.value as Language })}
-                        className="w-full px-2 py-1 text-sm bg-surface border border-white/10 rounded text-white"
-                      >
-                        {Object.entries(languageLabels).map(([key, label]) => (
-                          <option key={key} value={key}>{label}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => handleSaveEdit(item.cardId)}
-                        className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs bg-gold-500 text-surface-dark rounded-lg font-medium hover:bg-gold-400 transition-colors"
-                      >
-                        <Save className="w-3 h-3" />
-                        保存
-                      </button>
-                      <button
-                        onClick={() => setEditingItem(null)}
-                        className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs bg-white/10 text-gray-300 rounded-lg hover:bg-white/20 transition-colors"
-                      >
-                        <X className="w-3 h-3" />
-                        取消
-                      </button>
+                      </div>
                     </div>
                   </div>
-                ) : (
-                  <div className="absolute -bottom-2 left-2 right-2 glass-card py-1.5 px-2 text-xs flex items-center justify-between">
-                    <span className="text-gray-400">×{item.quantity} · {conditionLabels[item.condition]}</span>
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => handleStartEdit(item)}
-                        className="p-1 text-gold-400 hover:text-gold-300 transition-colors"
-                      >
-                        <Edit3 className="w-3 h-3" />
-                      </button>
-                      <button
-                        onClick={() => removeFromCollection(item.cardId)}
-                        className="p-1 text-red-400 hover:text-red-300 transition-colors"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         ) : (
           <div className="text-center py-20 glass-card">
@@ -370,13 +455,14 @@ export default function MyCollection() {
               </button>
             </div>
             <p className="text-sm text-gray-400 mb-4">
-              每行一张卡牌，格式：<code className="text-gold-400">数量x 卡牌名 [品相] [语言]</code><br />
-              示例：<code className="text-gold-400">2x 暗影龙王 [全新] [简体中文]</code>
+              每行一条记录，格式：<code className="text-gold-400">数量x 卡牌名 [品相] [语言]</code><br />
+              示例：<code className="text-gold-400">2x 暗影龙王 [全新] [简体中文]</code><br />
+              相同版本会自动合并数量，不同版本会新增条目
             </p>
             <textarea
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
-              placeholder="3x 烈焰法师 [近新] [简体中文]&#10;1x 圣光守护者 [全新] [英文]&#10;2x 森林守望者 [优秀]"
+              placeholder="3x 烈焰法师 [近新] [简体中文]&#10;1x 圣光守护者 [全新] [英文]&#10;2x 森林守望者 [优秀] [简体中文]"
               className="flex-1 w-full px-4 py-3 bg-surface border border-white/10 rounded-lg text-white placeholder-gray-600 resize-none font-mono text-sm"
               rows={12}
             />
@@ -409,7 +495,7 @@ export default function MyCollection() {
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="flex-1 w-full px-4 py-3 bg-surface border border-white/10 rounded-lg text-white font-mono text-sm overflow-auto mb-4">
+            <div className="flex-1 w-full px-4 py-3 bg-surface border border-white/10 rounded-lg text-white font-mono text-sm overflow-auto mb-4 whitespace-pre">
               {exportText || '暂无收藏数据'}
             </div>
             <div className="flex gap-3">

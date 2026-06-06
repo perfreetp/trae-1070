@@ -2,6 +2,12 @@ import { create } from 'zustand';
 import type { TradeRequest, Message, MatchResult, TradeCard, TradeStatus } from '../types';
 import { INITIAL_TRADES, INITIAL_MESSAGES, MOCK_MATCHES, USERS, getUserById } from '../data/users';
 
+let userStoreProcessTradeCompletion: ((offered: any[], received: any[]) => { success: boolean; missingCards?: any[] }) | null = null;
+
+export const setUserStoreRef = (fn: typeof userStoreProcessTradeCompletion) => {
+  userStoreProcessTradeCompletion = fn;
+};
+
 interface TradeStore {
   tradeRequests: TradeRequest[];
   messages: Message[];
@@ -15,7 +21,7 @@ interface TradeStore {
   acceptTrade: (tradeId: string) => void;
   rejectTrade: (tradeId: string) => void;
   markAsShipped: (tradeId: string, trackingNumber: string) => void;
-  confirmReceived: (tradeId: string) => void;
+  confirmReceived: (tradeId: string) => { success: boolean; missingCards?: { cardId: string; name: string; available: number; needed: number }[] };
   cancelTrade: (tradeId: string) => void;
 
   sendMessage: (receiverId: string, content: string, tradeId?: string) => void;
@@ -97,13 +103,33 @@ export const useTradeStore = create<TradeStore>((set, get) => ({
     ),
   })),
 
-  confirmReceived: (tradeId) => set((state) => ({
-    tradeRequests: state.tradeRequests.map((trade) =>
-      trade.id === tradeId
-        ? { ...trade, status: 'completed', updatedAt: new Date().toISOString() }
-        : trade
-    ),
-  })),
+  confirmReceived: (tradeId) => {
+    const trade = get().tradeRequests.find((t) => t.id === tradeId);
+    if (!trade || trade.status !== 'shipped') {
+      return { success: false };
+    }
+    
+    const isIncoming = trade.toUserId === 'current-user';
+    const offeredCards = isIncoming ? trade.offeredCards : trade.requestedCards;
+    const requestedCards = isIncoming ? trade.requestedCards : trade.offeredCards;
+    
+    if (userStoreProcessTradeCompletion) {
+      const result = userStoreProcessTradeCompletion(offeredCards, requestedCards);
+      if (!result.success) {
+        return result;
+      }
+    }
+    
+    set((state) => ({
+      tradeRequests: state.tradeRequests.map((t) =>
+        t.id === tradeId
+          ? { ...t, status: 'completed', updatedAt: new Date().toISOString() }
+          : t
+      ),
+    }));
+    
+    return { success: true };
+  },
 
   cancelTrade: (tradeId) => set((state) => ({
     tradeRequests: state.tradeRequests.map((trade) =>

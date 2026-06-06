@@ -1,9 +1,32 @@
 import { useState, useMemo } from 'react';
-import { User, Star, Shield, Clock, Settings, Ban, CheckCircle, XCircle, Edit3, Mail, MapPin } from 'lucide-react';
+import { User, Star, Shield, Clock, Settings, Ban, CheckCircle, XCircle, Edit3, Mail, MapPin, PieChart, Layers } from 'lucide-react';
 import { useUserStore } from '../store/useUserStore';
 import { useTradeStore } from '../store/useTradeStore';
 import { useCardStore } from '../store/useCardStore';
 import { getUserById, USERS } from '../data/users';
+
+const RARITY_LABELS: Record<string, { label: string; color: string }> = {
+  common: { label: '普通', color: 'bg-gray-400' },
+  uncommon: { label: '非普通', color: 'bg-green-500' },
+  rare: { label: '稀有', color: 'bg-blue-500' },
+  mythic: { label: '秘稀', color: 'bg-purple-500' },
+  legendary: { label: '传说', color: 'bg-gold-500' },
+};
+
+const CONDITION_LABELS: Record<string, string> = {
+  'mint': '全新',
+  'near-mint': '近新',
+  'excellent': '优秀',
+  'good': '良好',
+  'played': '使用过',
+};
+
+const LANGUAGE_LABELS: Record<string, string> = {
+  'zh-CN': '简中',
+  'en-US': '英文',
+  'ja-JP': '日文',
+  'ko-KR': '韩文',
+};
 
 export default function Profile() {
   const { currentUser, collection, wishlist, getCollectionStats, isBlocked, blockUser, unblockUser } = useUserStore();
@@ -16,6 +39,9 @@ export default function Profile() {
     tradeRequests.filter((t) => t.status === 'completed'), 
     [tradeRequests]
   );
+
+  const totalRarity = Object.values(stats.rarityDistribution).reduce((a, b) => a + b, 0);
+  const totalSets = Object.values(stats.setDistribution).reduce((a, b) => a + b, 0);
 
   return (
     <div className="min-h-screen pt-24 pb-12">
@@ -99,94 +125,166 @@ export default function Profile() {
 
         {/* Tab Content */}
         {activeTab === 'overview' && (
-          <div className="grid md:grid-cols-3 gap-6">
-            {/* Collection Stats */}
-            <div className="glass-card p-6">
-              <h3 className="font-display font-bold text-white mb-4 flex items-center gap-2">
-                <Shield className="w-5 h-5 text-gold-400" />
-                收藏统计
-              </h3>
-              <div className="space-y-4">
-                <div className="flex justify-between">
-                  <span className="text-gray-400">卡牌总数</span>
-                  <span className="font-bold text-white">{stats.totalCards}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-400">不同卡牌</span>
-                  <span className="font-bold text-white">{collection.length}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-400">估值总额</span>
-                  <span className="font-bold text-gold-400">¥{stats.totalValue.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-400">愿望清单</span>
-                  <span className="font-bold text-white">{wishlist.length} 张</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Trade Stats */}
-            <div className="glass-card p-6">
-              <h3 className="font-display font-bold text-white mb-4 flex items-center gap-2">
-                <Clock className="w-5 h-5 text-gold-400" />
-                交易统计
-              </h3>
-              <div className="space-y-4">
-                <div className="flex justify-between">
-                  <span className="text-gray-400">总交易数</span>
-                  <span className="font-bold text-white">{tradeRequests.length}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-400">已完成</span>
-                  <span className="font-bold text-green-400">{completedTrades.length}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-400">进行中</span>
-                  <span className="font-bold text-yellow-400">
-                    {tradeRequests.filter((t) => ['pending', 'accepted', 'shipped'].includes(t.status)).length}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-400">成功率</span>
-                  <span className="font-bold text-gold-400">
-                    {tradeRequests.length > 0
-                      ? Math.round((completedTrades.length / tradeRequests.length) * 100)
-                      : 0}%
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Badges */}
-            <div className="glass-card p-6">
-              <h3 className="font-display font-bold text-white mb-4 flex items-center gap-2">
-                <Star className="w-5 h-5 text-gold-400" />
-                成就徽章
-              </h3>
-              <div className="grid grid-cols-3 gap-3">
-                {[
-                  { name: '新手', icon: '🌱', unlocked: true },
-                  { name: '收藏家', icon: '💎', unlocked: stats.totalCards >= 20 },
-                  { name: '交易达人', icon: '🤝', unlocked: currentUser.tradeCount >= 10 },
-                  { name: '稀有猎人', icon: '⭐', unlocked: Object.keys(stats.rarityDistribution).includes('legendary') },
-                  { name: '信誉王', icon: '👑', unlocked: currentUser.reputation >= 95 },
-                  { name: '套牌大师', icon: '🃏', unlocked: false },
-                ].map((badge, idx) => (
-                  <div
-                    key={idx}
-                    className={`text-center p-3 rounded-xl ${
-                      badge.unlocked
-                        ? 'bg-gold-500/20 border border-gold-500/30'
-                        : 'bg-surface opacity-50'
-                    }`}
-                  >
-                    <span className="text-2xl block mb-1">{badge.icon}</span>
-                    <p className={`text-xs ${badge.unlocked ? 'text-gold-400' : 'text-gray-500'}`}>
-                      {badge.name}
-                    </p>
+          <div className="space-y-6">
+            <div className="grid md:grid-cols-3 gap-6">
+              {/* Collection Stats */}
+              <div className="glass-card p-6">
+                <h3 className="font-display font-bold text-white mb-4 flex items-center gap-2">
+                  <Shield className="w-5 h-5 text-gold-400" />
+                  收藏统计
+                </h3>
+                <div className="space-y-4">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">卡牌总数</span>
+                    <span className="font-bold text-white">{stats.totalCards}</span>
                   </div>
-                ))}
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">不同版本</span>
+                    <span className="font-bold text-white">{collection.length}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">估值总额</span>
+                    <span className="font-bold text-gold-400">¥{stats.totalValue.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">愿望清单</span>
+                    <span className="font-bold text-white">{wishlist.length} 张</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Trade Stats */}
+              <div className="glass-card p-6">
+                <h3 className="font-display font-bold text-white mb-4 flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-gold-400" />
+                  交易统计
+                </h3>
+                <div className="space-y-4">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">总交易数</span>
+                    <span className="font-bold text-white">{tradeRequests.length}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">已完成</span>
+                    <span className="font-bold text-green-400">{completedTrades.length}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">进行中</span>
+                    <span className="font-bold text-yellow-400">
+                      {tradeRequests.filter((t) => ['pending', 'accepted', 'shipped'].includes(t.status)).length}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">成功率</span>
+                    <span className="font-bold text-gold-400">
+                      {tradeRequests.length > 0
+                        ? Math.round((completedTrades.length / tradeRequests.length) * 100)
+                        : 0}%
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Badges */}
+              <div className="glass-card p-6">
+                <h3 className="font-display font-bold text-white mb-4 flex items-center gap-2">
+                  <Star className="w-5 h-5 text-gold-400" />
+                  成就徽章
+                </h3>
+                <div className="grid grid-cols-3 gap-3">
+                  {[
+                    { name: '新手', icon: '🌱', unlocked: true },
+                    { name: '收藏家', icon: '💎', unlocked: stats.totalCards >= 20 },
+                    { name: '交易达人', icon: '🤝', unlocked: currentUser.tradeCount >= 10 },
+                    { name: '稀有猎人', icon: '⭐', unlocked: Object.keys(stats.rarityDistribution).includes('legendary') },
+                    { name: '信誉王', icon: '👑', unlocked: currentUser.reputation >= 95 },
+                    { name: '套牌大师', icon: '🃏', unlocked: false },
+                  ].map((badge, idx) => (
+                    <div
+                      key={idx}
+                      className={`text-center p-3 rounded-xl ${
+                        badge.unlocked
+                          ? 'bg-gold-500/20 border border-gold-500/30'
+                          : 'bg-surface opacity-50'
+                      }`}
+                    >
+                      <span className="text-2xl block mb-1">{badge.icon}</span>
+                      <p className={`text-xs ${badge.unlocked ? 'text-gold-400' : 'text-gray-500'}`}>
+                        {badge.name}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Distribution Charts */}
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* Rarity Distribution */}
+              <div className="glass-card p-6">
+                <h3 className="font-display font-bold text-white mb-4 flex items-center gap-2">
+                  <PieChart className="w-5 h-5 text-gold-400" />
+                  稀有度分布
+                </h3>
+                {totalRarity > 0 ? (
+                  <div className="space-y-3">
+                    {Object.entries(stats.rarityDistribution).map(([rarity, count]) => {
+                      const percentage = Math.round((count / totalRarity) * 100);
+                      const rarityInfo = RARITY_LABELS[rarity] || { label: rarity, color: 'bg-gray-500' };
+                      return (
+                        <div key={rarity}>
+                          <div className="flex justify-between text-sm mb-1">
+                            <span className="text-gray-300">{rarityInfo.label}</span>
+                            <span className="text-white font-medium">{count} 张 ({percentage}%)</span>
+                          </div>
+                          <div className="h-2 bg-surface rounded-full overflow-hidden">
+                            <div
+                              className={`h-full ${rarityInfo.color} rounded-full transition-all duration-500`}
+                              style={{ width: `${percentage}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-gray-500">
+                    暂无收藏数据
+                  </div>
+                )}
+              </div>
+
+              {/* Set Distribution */}
+              <div className="glass-card p-6">
+                <h3 className="font-display font-bold text-white mb-4 flex items-center gap-2">
+                  <Layers className="w-5 h-5 text-gold-400" />
+                  系列分布
+                </h3>
+                {totalSets > 0 ? (
+                  <div className="space-y-3">
+                    {Object.entries(stats.setDistribution).map(([setName, count]) => {
+                      const percentage = Math.round((count / totalSets) * 100);
+                      return (
+                        <div key={setName}>
+                          <div className="flex justify-between text-sm mb-1">
+                            <span className="text-gray-300 truncate flex-1 mr-2">{setName}</span>
+                            <span className="text-white font-medium whitespace-nowrap">{count} 张 ({percentage}%)</span>
+                          </div>
+                          <div className="h-2 bg-surface rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-primary-500 rounded-full transition-all duration-500"
+                              style={{ width: `${percentage}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-gray-500">
+                    暂无收藏数据
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -226,6 +324,11 @@ export default function Profile() {
                             return cardData ? (
                               <div key={idx} className="text-sm text-green-400">
                                 +{card.quantity}x {cardData.name}
+                                {card.condition && card.language && (
+                                  <span className="text-gray-500 ml-1">
+                                    ({CONDITION_LABELS[card.condition]} {LANGUAGE_LABELS[card.language]})
+                                  </span>
+                                )}
                               </div>
                             ) : null;
                           })}
@@ -239,6 +342,11 @@ export default function Profile() {
                             return cardData ? (
                               <div key={idx} className="text-sm text-red-400">
                                 -{card.quantity}x {cardData.name}
+                                {card.condition && card.language && (
+                                  <span className="text-gray-500 ml-1">
+                                    ({CONDITION_LABELS[card.condition]} {LANGUAGE_LABELS[card.language]})
+                                  </span>
+                                )}
                               </div>
                             ) : null;
                           })}

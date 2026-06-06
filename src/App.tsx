@@ -1,4 +1,5 @@
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import { useEffect } from "react";
 import Header from "@/components/Layout/Header";
 import Home from "@/pages/Home";
 import CardAtlas from "@/pages/CardAtlas";
@@ -8,8 +9,16 @@ import TradeMatch from "@/pages/TradeMatch";
 import Chat from "@/pages/Chat";
 import DeckCheck from "@/pages/DeckCheck";
 import Profile from "@/pages/Profile";
+import { useCardStore } from "@/store/useCardStore";
+import { setCardStoreRef, useUserStore } from "@/store/useUserStore";
+import { setUserStoreRef } from "@/store/useTradeStore";
 
 export default function App() {
+  useEffect(() => {
+    setCardStoreRef(useCardStore.getState);
+    setUserStoreRef(useUserStore.getState().processTradeCompletion);
+  }, []);
+
   return (
     <Router>
       <div className="min-h-screen bg-surface text-gray-100">
