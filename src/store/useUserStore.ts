@@ -1,6 +1,12 @@
 import { create } from 'zustand';
-import type { User, CollectionItem, WishlistItem, CardCondition, Language } from '../types';
+import type { User, CollectionItem, WishlistItem, CardCondition, Language, Card } from '../types';
 import { CURRENT_USER, INITIAL_COLLECTION, INITIAL_WISHLIST } from '../data/users';
+
+let cardStoreGetState: (() => { getCardById: (id: string) => Card | undefined; cards: Card[] }) | null = null;
+
+export const setCardStoreRef = (ref: typeof cardStoreGetState) => {
+  cardStoreGetState = ref;
+};
 
 interface UserStore {
   currentUser: User;
@@ -138,21 +144,23 @@ export const useUserStore = create<UserStore>((set, get) => ({
 
   getCollectionStats: () => {
     const { collection } = get();
-    const { useCardStore } = require('./useCardStore');
     const totalCards = collection.reduce((sum, item) => sum + item.quantity, 0);
     
     let totalValue = 0;
     const rarityDistribution: Record<string, number> = {};
     const setDistribution: Record<string, number> = {};
     
-    collection.forEach((item) => {
-      const card = useCardStore.getState().getCardById(item.cardId);
-      if (card) {
-        totalValue += card.estimatedValue * item.quantity;
-        rarityDistribution[card.rarity] = (rarityDistribution[card.rarity] || 0) + item.quantity;
-        setDistribution[card.setName] = (setDistribution[card.setName] || 0) + item.quantity;
-      }
-    });
+    if (cardStoreGetState) {
+      const { getCardById } = cardStoreGetState();
+      collection.forEach((item) => {
+        const card = getCardById(item.cardId);
+        if (card) {
+          totalValue += card.estimatedValue * item.quantity;
+          rarityDistribution[card.rarity] = (rarityDistribution[card.rarity] || 0) + item.quantity;
+          setDistribution[card.setName] = (setDistribution[card.setName] || 0) + item.quantity;
+        }
+      });
+    }
     
     return { totalCards, totalValue, rarityDistribution, setDistribution };
   },

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Card, Rarity } from '../types';
 import { CARDS, CARD_SETS } from '../data/cards';
+import { setCardStoreRef } from './useUserStore';
 
 interface CardFilters {
   set?: string;
@@ -54,3 +55,5 @@ export const useCardStore = create<CardStore>((set, get) => ({
       .slice(0, 6);
   },
 }));
+
+setCardStoreRef(useCardStore.getState);

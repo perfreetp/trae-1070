@@ -11,6 +11,7 @@ interface TradeStore {
 
   calculateMatches: () => MatchResult[];
   sendTradeRequest: (targetUserId: string, offeredCards: TradeCard[], requestedCards: TradeCard[], message?: string) => void;
+  updateTradeProposal: (tradeId: string, offeredCards: TradeCard[], requestedCards: TradeCard[], message?: string) => void;
   acceptTrade: (tradeId: string) => void;
   rejectTrade: (tradeId: string) => void;
   markAsShipped: (tradeId: string, trackingNumber: string) => void;
@@ -56,6 +57,20 @@ export const useTradeStore = create<TradeStore>((set, get) => ({
         updatedAt: new Date().toISOString(),
       },
     ],
+  })),
+
+  updateTradeProposal: (tradeId, offeredCards, requestedCards, message) => set((state) => ({
+    tradeRequests: state.tradeRequests.map((trade) =>
+      trade.id === tradeId
+        ? {
+            ...trade,
+            offeredCards,
+            requestedCards,
+            message: message || trade.message,
+            updatedAt: new Date().toISOString(),
+          }
+        : trade
+    ),
   })),
 
   acceptTrade: (tradeId) => set((state) => ({

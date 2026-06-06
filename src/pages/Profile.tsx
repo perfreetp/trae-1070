@@ -258,38 +258,86 @@ export default function Profile() {
         )}
 
         {activeTab === 'blocked' && (
-          <div className="glass-card p-6">
-            <h3 className="font-display font-bold text-white mb-4">屏蔽的用户</h3>
-            {currentUser.blockedUsers.length > 0 ? (
-              <div className="space-y-3">
-                {currentUser.blockedUsers.map((userId) => {
-                  const user = getUserById(userId);
-                  if (!user) return null;
+          <div className="grid md:grid-cols-2 gap-6">
+            {/* All Users */}
+            <div className="glass-card p-6">
+              <h3 className="font-display font-bold text-white mb-4 flex items-center gap-2">
+                <User className="w-5 h-5 text-gold-400" />
+                所有用户
+              </h3>
+              <div className="space-y-2 max-h-[400px] overflow-y-auto scrollbar-thin">
+                {USERS.filter((u) => u.id !== 'current-user').map((user) => {
+                  const blocked = isBlocked(user.id);
                   return (
-                    <div key={userId} className="flex items-center justify-between p-3 rounded-lg bg-surface">
+                    <div key={user.id} className="flex items-center justify-between p-3 rounded-lg bg-surface hover:bg-surface-light transition-colors">
                       <div className="flex items-center gap-3">
                         <img src={user.avatar} alt="" className="w-10 h-10 rounded-full" />
                         <div>
                           <p className="font-medium text-white">{user.username}</p>
-                          <p className="text-xs text-gray-400">{user.tradeCount} 次交易</p>
+                          <p className="text-xs text-gray-400">{user.location} · {user.tradeCount} 次交易</p>
                         </div>
                       </div>
-                      <button
-                        onClick={() => unblockUser(userId)}
-                        className="px-4 py-1.5 rounded-lg text-sm bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
-                      >
-                        解除屏蔽
-                      </button>
+                      {blocked ? (
+                        <button
+                          onClick={() => unblockUser(user.id)}
+                          className="px-3 py-1.5 rounded-lg text-sm bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
+                        >
+                          已屏蔽
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => blockUser(user.id)}
+                          className="px-3 py-1.5 rounded-lg text-sm bg-gray-500/20 text-gray-300 hover:bg-gray-500/30 transition-colors flex items-center gap-1"
+                        >
+                          <Ban className="w-3 h-3" />
+                          屏蔽
+                        </button>
+                      )}
                     </div>
                   );
                 })}
               </div>
-            ) : (
-              <div className="text-center py-8">
-                <Ban className="w-12 h-12 mx-auto text-gray-600 mb-3" />
-                <p className="text-gray-400">暂无屏蔽的用户</p>
-              </div>
-            )}
+            </div>
+
+            {/* Blocked Users */}
+            <div className="glass-card p-6">
+              <h3 className="font-display font-bold text-white mb-4 flex items-center gap-2">
+                <Ban className="w-5 h-5 text-red-400" />
+                已屏蔽 ({currentUser.blockedUsers.length})
+              </h3>
+              {currentUser.blockedUsers.length > 0 ? (
+                <div className="space-y-2 max-h-[400px] overflow-y-auto scrollbar-thin">
+                  {currentUser.blockedUsers.map((userId) => {
+                    const user = getUserById(userId);
+                    if (!user) return null;
+                    return (
+                      <div key={userId} className="flex items-center justify-between p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+                        <div className="flex items-center gap-3">
+                          <img src={user.avatar} alt="" className="w-10 h-10 rounded-full opacity-60" />
+                          <div>
+                            <p className="font-medium text-white">{user.username}</p>
+                            <p className="text-xs text-gray-400">{user.tradeCount} 次交易</p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => unblockUser(userId)}
+                          className="px-3 py-1.5 rounded-lg text-sm bg-green-500/20 text-green-400 hover:bg-green-500/30 transition-colors flex items-center gap-1"
+                        >
+                          <CheckCircle className="w-3 h-3" />
+                          解除
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-12">
+                  <CheckCircle className="w-12 h-12 mx-auto text-green-600 mb-3" />
+                  <p className="text-gray-400">暂无屏蔽的用户</p>
+                  <p className="text-xs text-gray-500 mt-1">您可以从左侧列表中屏蔽不可信的用户</p>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
