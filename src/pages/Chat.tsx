@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { Send, Check, CheckCheck, Package, User, Search, MoreVertical, X, Edit3, Plus, Minus, Save, AlertCircle } from 'lucide-react';
+import { Send, Check, CheckCheck, Package, User, Search, MoreVertical, X, Edit3, Plus, Minus, Save, AlertCircle, ArrowRight, TrendingDown, TrendingUp } from 'lucide-react';
 import { useTradeStore } from '../store/useTradeStore';
 import { getUserById } from '../data/users';
 import { useCardStore } from '../store/useCardStore';
+import { useUserStore, getCardVersionPrice } from '../store/useUserStore';
 import type { TradeCard, TradeRequest, CardCondition, Language } from '../types';
 
 const conditionLabels: Record<CardCondition, string> = {
@@ -37,6 +38,7 @@ export default function Chat() {
     getTradeById,
   } = useTradeStore();
   const { getCardById, cards } = useCardStore();
+  const { collection, getCollectionQuantity } = useUserStore();
   const [messageInput, setMessageInput] = useState('');
   const [activeTab, setActiveTab] = useState<'messages' | 'trades'>('messages');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -46,6 +48,7 @@ export default function Chat() {
   const [negotiateRequested, setNegotiateRequested] = useState<TradeCard[]>([]);
   const [negotiateMessage, setNegotiateMessage] = useState('');
   const [originalTrade, setOriginalTrade] = useState<TradeRequest | null>(null);
+  const [showPreviewTrade, setShowPreviewTrade] = useState<string | null>(null);
 
   const conversations = useMemo(() => getConversationsList(), [getConversationsList, messages]);
   const activeConversation = useMemo(() => 
@@ -105,25 +108,21 @@ export default function Chat() {
 
   const formatChangeComparison = (oldCards: TradeCard[], newCards: TradeCard[], isOffered: boolean) => {
     const changes: string[] = [];
-    const oldMap = new Map(oldCards.map(c => [`${c.cardId}-${c.condition}-${c.language}`, c]));
-    const newMap = new Map(newCards.map(c => [`${c.cardId}-${c.condition}-${c.language}`, c]));
     
     newCards.forEach((c, idx) => {
-      const key = `${c.cardId}-${c.condition}-${c.language}`;
       const oldCard = oldCards.find((oc, oi) => {
-        const oldKey = `${oc.cardId}-${oc.condition}-${oc.language}`;
-        return oc.cardId === c.cardId && !newCards.some((nc, ni) => ni !== idx && `${nc.cardId}-${nc.condition}-${nc.language}` === oldKey);
+        return oc.cardId === c.cardId && !newCards.some((nc, ni) => ni !== idx && nc.cardId === oc.cardId);
       });
       
       const card = getCardById(c.cardId);
       if (!card) return;
       
       if (!oldCard) {
-        changes.push(`+${c.quantity}x ${card.name} (${conditionLabels[c.condition || 'near-mint']} ${languageLabels[c.language || 'zh-CN']})【新增】`);
+        changes.push(`+${c.quantity}x ${card.name} (${conditionLabels[(c.condition || 'near-mint') as CardCondition]} ${languageLabels[(c.language || 'zh-CN') as Language]})【新增】`);
       } else if (oldCard.quantity !== c.quantity || oldCard.condition !== c.condition || oldCard.language !== c.language) {
         const qtyChange = oldCard.quantity !== c.quantity ? `数量: ${oldCard.quantity}→${c.quantity}` : '';
-        const condChange = oldCard.condition !== c.condition ? `品相: ${conditionLabels[oldCard.condition || 'near-mint']}→${conditionLabels[c.condition || 'near-mint']}` : '';
-        const langChange = oldCard.language !== c.language ? `语言: ${languageLabels[oldCard.language || 'zh-CN']}→${languageLabels[c.language || 'zh-CN']}` : '';
+        const condChange = oldCard.condition !== c.condition ? `品相: ${conditionLabels[(oldCard.condition || 'near-mint') as CardCondition]}→${conditionLabels[(c.condition || 'near-mint') as CardCondition]}` : '';
+        const langChange = oldCard.language !== c.language ? `语言: ${languageLabels[(oldCard.language || 'zh-CN') as Language]}→${languageLabels[(c.language || 'zh-CN') as Language]}` : '';
         const changesArr = [qtyChange, condChange, langChange].filter(Boolean);
         changes.push(`${card.name}: ${changesArr.join(', ')}`);
       }
@@ -134,7 +133,7 @@ export default function Chat() {
       if (!stillExists) {
         const card = getCardById(oc.cardId);
         if (card) {
-          changes.push(`-${oc.quantity}x ${card.name} (${conditionLabels[oc.condition || 'near-mint']} ${languageLabels[oc.language || 'zh-CN']})【移除】`);
+          changes.push(`-${oc.quantity}x ${card.name} (${conditionLabels[(oc.condition || 'near-mint') as CardCondition]} ${languageLabels[(oc.language || 'zh-CN') as Language]})【移除】`);
         }
       }
     });
@@ -161,6 +160,34 @@ export default function Chat() {
     setOriginalTrade(null);
   };
 
+  const getTradePreview = (trade: TradeRequest) => {
+    const imInitiator = trade.fromUserId === 'current-user';
+    const myOfferedCards = imInitiator ? trade.offeredCards : trade.requestedCards;
+    const myReceivedCards = imInitiator ? trade.requestedCards : trade.offeredCards;
+    
+    const insufficiencies: { cardId: string; name: string; available: number; needed: number; condition: CardCondition; language: Language }[] = [];
+    
+    myOfferedCards.forEach((offered) => {
+      const condition = (offered.condition || 'near-mint') as CardCondition;
+      const language = (offered.language || 'zh-CN') as Language;
+      const available = getCollectionQuantity(offered.cardId, condition, language);
+      
+      if (available < offered.quantity) {
+        const card = getCardById(offered.cardId);
+        insufficiencies.push({
+          cardId: offered.cardId,
+          name: card?.name || offered.cardId,
+          available,
+          needed: offered.quantity,
+          condition,
+          language,
+        });
+      }
+    });
+    
+    return { myOfferedCards, myReceivedCards, insufficiencies };
+  };
+
   const handleConfirmReceived = (tradeId: string) => {
     const result = confirmReceived(tradeId);
     if (!result.success && result.missingCards) {
@@ -169,6 +196,7 @@ export default function Chat() {
       ).join('\n');
       alert(`无法确认收货，以下卡牌数量不足：\n${missingText}`);
     }
+    setShowPreviewTrade(null);
   };
 
   const formatTime = (timestamp: string) => {
@@ -182,6 +210,39 @@ export default function Chat() {
     shipped: { label: '已寄出', color: 'bg-purple-500/20 text-purple-400' },
     completed: { label: '已完成', color: 'bg-green-500/20 text-green-400' },
     cancelled: { label: '已取消', color: 'bg-gray-500/20 text-gray-400' },
+  };
+
+  const TradeCardItem = ({ card, type }: { card: TradeCard; type: 'given' | 'received' }) => {
+    const cardData = getCardById(card.cardId);
+    if (!cardData) return null;
+    
+    const condition = (card.condition || 'near-mint') as CardCondition;
+    const language = (card.language || 'zh-CN') as Language;
+    const price = getCardVersionPrice(cardData, condition, language);
+    
+    return (
+      <div className="flex items-center gap-2 p-2 bg-surface rounded-lg">
+        <span className={`w-6 h-6 rounded flex items-center justify-center text-xs font-bold ${
+          type === 'given' ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'
+        }`}>
+          {type === 'given' ? '-' : '+'}
+        </span>
+        <div className="flex-1 min-w-0">
+          <p className={`text-sm font-medium truncate ${type === 'given' ? 'text-red-400' : 'text-green-400'}`}>
+            {card.quantity}x {cardData.name}
+          </p>
+          <div className="flex flex-wrap gap-1 mt-0.5">
+            <span className="text-xs px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded">
+              {languageLabels[language]}
+            </span>
+            <span className="text-xs px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded">
+              {conditionLabels[condition]}
+            </span>
+            <span className="text-xs text-gray-500">¥{price}/张</span>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -371,10 +432,13 @@ export default function Chat() {
               const otherUser = getUserById(
                 trade.fromUserId === 'current-user' ? trade.toUserId : trade.fromUserId
               );
-              const isIncoming = trade.toUserId === 'current-user';
+              const imInitiator = trade.fromUserId === 'current-user';
               const canNegotiate = (trade.status === 'pending' || trade.status === 'accepted');
               const isNegotiating = negotiatingTrade === trade.id;
+              const isPreviewing = showPreviewTrade === trade.id;
               if (!otherUser) return null;
+
+              const preview = getTradePreview(trade);
 
               return (
                 <div key={trade.id} className="glass-card p-6">
@@ -384,7 +448,7 @@ export default function Chat() {
                       <div>
                         <div className="flex items-center gap-2">
                           <h4 className="font-display font-bold text-white">
-                            {isIncoming ? '来自 ' : '发给 '}{otherUser.username}
+                            {imInitiator ? `发给 ${otherUser.username}` : `来自 ${otherUser.username}`}
                           </h4>
                           <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${statusLabels[trade.status].color}`}>
                             {statusLabels[trade.status].label}
@@ -573,52 +637,97 @@ export default function Chat() {
                             </button>
                           </div>
                         </div>
+                      ) : isPreviewing ? (
+                        <div className="space-y-4">
+                          <div className="p-4 bg-surface rounded-lg border border-gold-500/30">
+                            <h4 className="font-display font-bold text-gold-400 mb-3 flex items-center gap-2">
+                              <AlertCircle className="w-4 h-4" />
+                              收藏变动预览
+                            </h4>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                              <div>
+                                <p className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                                  <TrendingDown className="w-3 h-3 text-red-400" />
+                                  我的收藏将减少（给出）
+                                </p>
+                                <div className="space-y-2">
+                                  {preview.myOfferedCards.map((card, idx) => (
+                                    <TradeCardItem key={idx} card={card} type="given" />
+                                  ))}
+                                </div>
+                              </div>
+                              <div>
+                                <p className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                                  <TrendingUp className="w-3 h-3 text-green-400" />
+                                  我的收藏将增加（收到）
+                                </p>
+                                <div className="space-y-2">
+                                  {preview.myReceivedCards.map((card, idx) => (
+                                    <TradeCardItem key={idx} card={card} type="received" />
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                            
+                            {preview.insufficiencies.length > 0 && (
+                              <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
+                                <p className="text-sm text-red-400 font-medium mb-2 flex items-center gap-1">
+                                  <AlertCircle className="w-4 h-4" />
+                                  以下卡牌数量不足，无法确认收货：
+                                </p>
+                                <div className="space-y-1">
+                                  {preview.insufficiencies.map((ins, idx) => (
+                                    <p key={idx} className="text-sm text-red-300">
+                                      • {ins.name} ({conditionLabels[ins.condition]} {languageLabels[ins.language]})：
+                                      持有 <span className="font-bold">{ins.available}</span> 张，
+                                      需要 <span className="font-bold">{ins.needed}</span> 张
+                                    </p>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                          
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleConfirmReceived(trade.id)}
+                              className="btn-gold flex items-center gap-2 text-sm"
+                              disabled={preview.insufficiencies.length > 0}
+                            >
+                              <Check className="w-4 h-4" />
+                              确认收货并更新收藏
+                            </button>
+                            <button
+                              onClick={() => setShowPreviewTrade(null)}
+                              className="btn-outline text-sm"
+                            >
+                              取消
+                            </button>
+                          </div>
+                        </div>
                       ) : (
                         <div className="grid grid-cols-2 gap-4">
                           <div>
-                            <p className="text-xs text-gray-500 mb-2">
-                              {isIncoming ? '对方给出' : '你给出'}
+                            <p className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                              <TrendingDown className="w-3 h-3 text-red-400" />
+                              我将给出
                             </p>
                             <div className="space-y-1">
-                              {trade.offeredCards.map((card, idx) => {
-                                const cardData = getCardById(card.cardId);
-                                return cardData ? (
-                                  <div key={idx} className="text-sm text-green-400">
-                                    <span className="flex items-center gap-1">
-                                      <span className="w-6 h-6 rounded bg-green-500/20 flex items-center justify-center text-xs">+{card.quantity}</span>
-                                      {cardData.name}
-                                      {(card.condition || card.language) && (
-                                        <span className="text-gray-500 text-xs ml-1">
-                                          ({card.condition && conditionLabels[card.condition]}{card.language ? ` ${languageLabels[card.language]}` : ''})
-                                        </span>
-                                      )}
-                                    </span>
-                                  </div>
-                                ) : null;
-                              })}
+                              {preview.myOfferedCards.map((card, idx) => (
+                                <TradeCardItem key={idx} card={card} type="given" />
+                              ))}
                             </div>
                           </div>
                           <div>
-                            <p className="text-xs text-gray-500 mb-2">
-                              {isIncoming ? '对方想要' : '你想要'}
+                            <p className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                              <TrendingUp className="w-3 h-3 text-green-400" />
+                              我将收到
                             </p>
                             <div className="space-y-1">
-                              {trade.requestedCards.map((card, idx) => {
-                                const cardData = getCardById(card.cardId);
-                                return cardData ? (
-                                  <div key={idx} className="text-sm text-red-400">
-                                    <span className="flex items-center gap-1">
-                                      <span className="w-6 h-6 rounded bg-red-500/20 flex items-center justify-center text-xs">-{card.quantity}</span>
-                                      {cardData.name}
-                                      {(card.condition || card.language) && (
-                                        <span className="text-gray-500 text-xs ml-1">
-                                          ({card.condition && conditionLabels[card.condition]}{card.language ? ` ${languageLabels[card.language]}` : ''})
-                                        </span>
-                                      )}
-                                    </span>
-                                  </div>
-                                ) : null;
-                              })}
+                              {preview.myReceivedCards.map((card, idx) => (
+                                <TradeCardItem key={idx} card={card} type="received" />
+                              ))}
                             </div>
                           </div>
                         </div>
@@ -626,7 +735,7 @@ export default function Chat() {
                     </div>
                   </div>
 
-                  {trade.message && !isNegotiating && (
+                  {trade.message && !isNegotiating && !isPreviewing && (
                     <div className="mt-4 p-3 rounded-lg bg-surface">
                       <p className="text-sm text-gray-300">"{trade.message}"</p>
                     </div>
@@ -634,7 +743,7 @@ export default function Chat() {
 
                   {/* Actions */}
                   <div className="mt-4 flex flex-wrap gap-2">
-                    {!isNegotiating && trade.status === 'pending' && isIncoming && (
+                    {!isNegotiating && !isPreviewing && trade.status === 'pending' && !imInitiator && (
                       <>
                         <button
                           onClick={() => acceptTrade(trade.id)}
@@ -661,7 +770,7 @@ export default function Chat() {
                         )}
                       </>
                     )}
-                    {!isNegotiating && trade.status === 'accepted' && (
+                    {!isNegotiating && !isPreviewing && trade.status === 'accepted' && (
                       <>
                         <button
                           onClick={() => markAsShipped(trade.id, 'SF' + Date.now())}
@@ -681,10 +790,10 @@ export default function Chat() {
                         )}
                       </>
                     )}
-                    {trade.status === 'shipped' && (
+                    {!isNegotiating && !isPreviewing && trade.status === 'shipped' && (
                       <>
                         <button
-                          onClick={() => handleConfirmReceived(trade.id)}
+                          onClick={() => setShowPreviewTrade(trade.id)}
                           className="btn-gold flex items-center gap-2"
                         >
                           <Check className="w-4 h-4" />
@@ -697,7 +806,13 @@ export default function Chat() {
                         )}
                       </>
                     )}
-                    {!isNegotiating && trade.status === 'pending' && !isIncoming && (
+                    {!isNegotiating && !isPreviewing && trade.status === 'completed' && (
+                      <span className="text-sm text-green-400 flex items-center gap-2">
+                        <Check className="w-4 h-4" />
+                        交易已完成，收藏已自动更新
+                      </span>
+                    )}
+                    {!isNegotiating && !isPreviewing && trade.status === 'pending' && imInitiator && (
                       <>
                         <span className="text-sm text-gray-400 flex items-center gap-2">
                           等待对方回应...

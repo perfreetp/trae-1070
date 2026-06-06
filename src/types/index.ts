@@ -100,6 +100,21 @@ export interface DeckCard {
   quantity: number;
 }
 
+export type CollectionChangeSource = 'manual' | 'bulk-import' | 'trade' | 'delete';
+
+export interface CollectionChangeLog {
+  id: string;
+  cardId: string;
+  cardName: string;
+  condition: CardCondition;
+  language: Language;
+  quantityChange: number;
+  quantityAfter: number;
+  source: CollectionChangeSource;
+  sourceDescription?: string;
+  timestamp: string;
+}
+
 export interface DeckAnalysis {
   totalCards: number;
   ownedCards: number;
